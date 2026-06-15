@@ -103,9 +103,9 @@ def save_historique(msisdn, type_trans, montant, destinataire, reference):
 @app.route('/ussd/callback', methods=['POST'])
 def ussd_callback():
     data = request.json
-    msisdn = data.get('msisdn', '0788000001')
-    session_id = data.get('sessionId', 'test123')
-    text = data.get('text', '')
+    msisdn = data.get('msisdn', '25761069606')
+    session_id = data.get('transaction_id"', 'test123')
+    text = data.get('ussd_request_msg', '')
     
     parts = text.split('*') if text else []
     print(f"📱 {msisdn} => {text}")
