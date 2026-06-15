@@ -1,5 +1,5 @@
-# app.py - UMWAMPI Monnaie Electronique
-from flask import Flask, request, jsonify, render_template_string
+# app.py - UMWAMPI Monnaie Electronique (Version finale propre)
+from flask import Flask, request, jsonify
 import sqlite3
 import json
 import random
@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-# ============ NOMS ALEATOIRES POUR BENEFICIAIRES ============
+# ============ NOMS ALEATOIRES ============
 NOMS_BENEFICIAIRES = [
     "Jean Baptiste HABIMANA",
     "Marie Claire UWIMANA",
@@ -26,28 +26,29 @@ NOMS_BENEFICIAIRES = [
     "Leonidas NDAYISENGA"
 ]
 
-MAIN_CODE = "*220*423#"
+# ============ SESSIONS ============
+sessions = {}
 
 # ============ BASE DE DONNEES ============
 def init_db():
     conn = sqlite3.connect('umwampi.db')
     c = conn.cursor()
     
-    # Table transactions
+    # Table transactions - UNIQUEMENT transactions finales
     c.execute('''CREATE TABLE IF NOT EXISTS transactions
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   msisdn TEXT,
-                  session_id TEXT,
+                  transaction_id TEXT,
                   operation TEXT,
-                  full_path TEXT,
-                  input_data TEXT,
+                  montant REAL,
+                  destinataire TEXT,
+                  reference TEXT,
                   payload_cecadm TEXT,
                   reponse_cecadm TEXT,
-                  message_ussd TEXT,
                   statut TEXT,
                   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     
-    # Table historique simplifiee
+    # Table historique utilisateur
     c.execute('''CREATE TABLE IF NOT EXISTS historique
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   msisdn TEXT,
@@ -61,10 +62,10 @@ def init_db():
     c.execute("SELECT COUNT(*) FROM historique")
     if c.fetchone()[0] == 0:
         demo_data = [
-            ("0788000001", "depot", 5000, "Compte propre", "REF001", datetime.now() - timedelta(hours=2)),
-            ("0788000001", "retrait", 2000, "Compte propre", "REF002", datetime.now() - timedelta(days=1)),
-            ("0788000001", "achat_unites", 1000, "Lydia", "REF003", datetime.now() - timedelta(days=2)),
-            ("0788000001", "depot", 10000, "Compte propre", "REF004", datetime.now() - timedelta(days=3)),
+            ("25761000001", "depot", 5000, "Compte propre", "REF001", datetime.now() - timedelta(hours=2)),
+            ("25761000001", "retrait", 2000, "Compte propre", "REF002", datetime.now() - timedelta(days=1)),
+            ("25761000001", "achat_unites", 1000, "Lydia", "REF003", datetime.now() - timedelta(days=2)),
+            ("25761000001", "depot", 10000, "Compte propre", "REF004", datetime.now() - timedelta(days=3)),
         ]
         c.executemany("INSERT INTO historique (msisdn, type_transaction, montant, destinataire, reference, date_heure) VALUES (?,?,?,?,?,?)", demo_data)
     
@@ -78,17 +79,18 @@ def get_random_name():
 def generate_reference():
     return f"UMW{datetime.now().strftime('%Y%m%d%H%M%S')}{random.randint(10,99)}"
 
-def save_transaction(msisdn, session_id, operation, full_path, input_data, payload, reponse, message, statut):
+def save_final_transaction(msisdn, transaction_id, operation, montant, destinataire, reference, payload, reponse, statut):
+    """Sauvegarde UNIQUEMENT les transactions finales (confirmees ou annulees)"""
     conn = sqlite3.connect('umwampi.db')
     c = conn.cursor()
     c.execute('''INSERT INTO transactions 
-                 (msisdn, session_id, operation, full_path, input_data,
-                  payload_cecadm, reponse_cecadm, message_ussd, statut)
+                 (msisdn, transaction_id, operation, montant, destinataire, reference,
+                  payload_cecadm, reponse_cecadm, statut)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (msisdn, session_id, operation, full_path, json.dumps(input_data),
+              (msisdn, transaction_id, operation, montant, destinataire, reference,
                json.dumps(payload) if payload else None,
                json.dumps(reponse) if reponse else None,
-               message, statut))
+               statut))
     conn.commit()
     conn.close()
 
@@ -101,59 +103,147 @@ def save_historique(msisdn, type_trans, montant, destinataire, reference):
     conn.commit()
     conn.close()
 
-# ============ MENUS USSD ============
+# ============ ENDPOINT USSD ============
 @app.route('/ussd/callback', methods=['POST'])
 def ussd_callback():
-    data = request.json
-    msisdn = data.get('msisdn', '25761069606') # pyright: ignore 
-    session_id = data.get('transaction_id"', 'test123') # pyright: ignore 
-    text = data.get('ussd_request_msg', '') # pyright: ignore 
-    
-    parts = text.split('*') if text else []
-    print(f"{msisdn} => {text}")
-    
-    # ============ MENU PRINCIPAL ============
-    if text == MAIN_CODE:
-        msg = """Bienvenue sur UMWAMPI
+    try:
+        data = request.json
+        transaction_id = data.get('transaction_id', '') # pyright: ignore
+        msisdn = data.get('msisdn', '') # pyright: ignore
+        user_input = data.get('ussd_request_msg', '').strip() # pyright: ignore
+        
+        # LOG: tout est loggué dans la console, rien en BD
+        print(f"📱 [{transaction_id}] {msisdn} => '{user_input}'")
+        
+        # ============ INIT SESSION ============
+        if transaction_id not in sessions:
+            sessions[transaction_id] = {
+                'step': 'init',
+                'msisdn': msisdn,
+                'data': {}
+            }
+            print(f"🆕 Nouvelle session: {transaction_id}")
+        
+        session = sessions[transaction_id]
+        step = session.get('step', 'init')
+        
+        # ============ PREMIERE INTERACTION (peu importe le code) ============
+        if step == 'init':
+            # Premier appel = l'utilisateur vient de composer un code USSD
+            # On accepte n'importe quel code, on affiche le menu
+            session['step'] = 'main_menu'
+            msg = """Bienvenue sur UMWAMPI
 1. Depot
 2. Retrait
 3. Historique
 4. Balance
 5. Vente unites
 6. Banque"""
-        save_transaction(msisdn, session_id, "menu", "", {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 1. DEPOT ============
-    if parts[0] == '1':
-        if len(parts) == 1:
-            msg = "Montant du depot\nEntrez le montant:"
-        elif len(parts) == 2:
-            msg = "Entrez votre PIN a 4 chiffres:"
-        elif len(parts) == 3:
-            pin = parts[2]
-            if len(pin) == 4 and pin.isdigit():
-                montant = parts[1]
+            print(f"Menu principal affiche pour {msisdn}")
+            return jsonify({"msg": msg, "request_type": "202"})
+        
+        # ============ RETOUR MENU ============
+        if user_input == '0':
+            session['step'] = 'main_menu'
+            session['data'] = {}
+            msg = """Bienvenue sur UMWAMPI
+1. Depot
+2. Retrait
+3. Historique
+4. Balance
+5. Vente unites
+6. Banque"""
+            print(f"🔙 Retour menu: {msisdn}")
+            return jsonify({"msg": msg, "request_type": "202"})
+        
+        # ============ MENU PRINCIPAL ============
+        if step == 'main_menu':
+            choix = user_input
+            
+            if choix == '1':  # DEPOT
+                session['step'] = 'depot_montant'
+                session['data'] = {'operation': 'depot'}
+                msg = "Montant du depot\nEntrez le montant:"
+                
+            elif choix == '2':  # RETRAIT
+                session['step'] = 'retrait_montant'
+                session['data'] = {'operation': 'retrait'}
+                msg = "Montant du retrait\nEntrez le montant:"
+                
+            elif choix == '3':  # HISTORIQUE
+                return handle_historique(msisdn, transaction_id)
+                
+            elif choix == '4':  # BALANCE
+                session['step'] = 'balance_pin'
+                session['data'] = {'operation': 'balance'}
+                msg = "Entrez votre PIN a 4 chiffres:"
+                
+            elif choix == '5':  # VENTE UNITES
+                session['step'] = 'vente_menu'
+                session['data'] = {'operation': 'vente_unites'}
+                msg = """Vente unites
+1. Acheter unites
+2. Vendre unites
+0. Menu principal"""
+                
+            elif choix == '6':  # BANQUE
+                session['step'] = 'banque_menu'
+                session['data'] = {'operation': 'banque'}
+                msg = """Banque
+1. UMWAMPI vers Banque
+2. Banque vers UMWAMPI
+0. Menu principal"""
+                
+            else:
+                msg = """Option invalide
+1. Depot
+2. Retrait
+3. Historique
+4. Balance
+5. Vente unites
+6. Banque"""
+            
+            print(f"Etape: {session['step']} | Saisie: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+        
+        # ============ DEPOT ============
+        elif step == 'depot_montant':
+            if user_input.isdigit() and int(user_input) > 0:
+                session['data']['montant'] = user_input
+                session['step'] = 'depot_pin'
+                msg = "Entrez votre PIN a 4 chiffres:"
+            else:
+                msg = "Montant invalide\nEntrez le montant:"
+            print(f"Depot - Montant: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'depot_pin':
+            if len(user_input) == 4 and user_input.isdigit():
+                session['data']['pin'] = user_input
+                session['step'] = 'depot_confirm'
                 ref = generate_reference()
+                session['data']['reference'] = ref
                 msg = f"""Confirmation depot
-Montant: {montant} Fbu
+Montant: {session['data']['montant']} Fbu
 Reference: {ref}
-Pin: ****
                 
 1. Confirmer
 2. Annuler"""
             else:
-                msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
-        elif len(parts) == 4:
-            if parts[3] == '1':
-                montant = parts[1]
-                ref = generate_reference()
-                
-                # Simuler reponse CECADM
+                msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
+            print(f"Depot - PIN: ****")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'depot_confirm':
+            montant = int(session['data']['montant'])
+            ref = session['data']['reference']
+            
+            if user_input == '1':
+                # SIMULATION CECADM
                 payload_cecadm = {
                     "endpoint": "CECADM_API/deposit",
                     "phone": msisdn,
-                    "amount": int(montant),
+                    "amount": montant,
                     "reference": ref
                 }
                 reponse_cecadm = {
@@ -161,14 +251,15 @@ Pin: ****
                     "code": "200",
                     "message": "Depot effectue",
                     "transaction_id": ref,
-                    "nouveau_solde": 50000 + int(montant)
+                    "nouveau_solde": 50000 + montant
                 }
                 
-                save_historique(msisdn, "depot", int(montant), "Compte propre", ref)
-                save_transaction(msisdn, session_id, "depot", text, 
-                               {"montant": montant, "pin": parts[2]},
-                               payload_cecadm, reponse_cecadm,
-                               f"Depot de {montant} Fbu effectue\nRef: {ref}", "success")
+                # Sauvegarde BD (finale seulement)
+                save_final_transaction(msisdn, transaction_id, "depot", montant, 
+                                      "Compte propre", ref, payload_cecadm, reponse_cecadm, "success")
+                save_historique(msisdn, "depot", montant, "Compte propre", ref)
+                
+                print(f"Depot confirme: {montant} Fbu | Ref: {ref}")
                 
                 msg = f"""Depot effectue avec succes!
 Montant: {montant} Fbu
@@ -176,42 +267,55 @@ Reference: {ref}
 Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
                 
 Merci d'utiliser UMWAMPI"""
+                del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
             else:
+                # Annulation - aussi sauvegardé en BD
+                save_final_transaction(msisdn, transaction_id, "depot", montant,
+                                      "Compte propre", ref, None, None, "annule")
+                print(f"Depot annule: {montant} Fbu")
+                
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
+                del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
         
-        save_transaction(msisdn, session_id, "depot", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 2. RETRAIT ============
-    elif parts[0] == '2':
-        if len(parts) == 1:
-            msg = "Montant du retrait\nEntrez le montant:"
-        elif len(parts) == 2:
-            msg = "Entrez votre PIN a 4 chiffres:"
-        elif len(parts) == 3:
-            pin = parts[2]
-            if len(pin) == 4 and pin.isdigit():
-                montant = parts[1]
+        # ============ RETRAIT ============
+        elif step == 'retrait_montant':
+            if user_input.isdigit() and int(user_input) > 0:
+                session['data']['montant'] = user_input
+                session['step'] = 'retrait_pin'
+                msg = "Entrez votre PIN a 4 chiffres:"
+            else:
+                msg = "Montant invalide\nEntrez le montant:"
+            print(f"Retrait - Montant: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'retrait_pin':
+            if len(user_input) == 4 and user_input.isdigit():
+                session['data']['pin'] = user_input
+                session['step'] = 'retrait_confirm'
                 ref = generate_reference()
+                session['data']['reference'] = ref
                 msg = f"""Confirmation retrait
-Montant: {montant} Fbu
+Montant: {session['data']['montant']} Fbu
 Reference: {ref}
                 
 1. Confirmer
 2. Annuler"""
             else:
-                msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
-        elif len(parts) == 4:
-            if parts[3] == '1':
-                montant = parts[1]
-                ref = generate_reference()
-                
+                msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
+            print(f"Retrait - PIN: ****")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'retrait_confirm':
+            montant = int(session['data']['montant'])
+            ref = session['data']['reference']
+            
+            if user_input == '1':
                 payload_cecadm = {
                     "endpoint": "CECADM_API/withdraw",
                     "phone": msisdn,
-                    "amount": int(montant),
+                    "amount": montant,
                     "reference": ref
                 }
                 reponse_cecadm = {
@@ -219,14 +323,14 @@ Reference: {ref}
                     "code": "200",
                     "message": "Retrait effectue",
                     "transaction_id": ref,
-                    "nouveau_solde": 50000 - int(montant)
+                    "nouveau_solde": 50000 - montant
                 }
                 
-                save_historique(msisdn, "retrait", int(montant), "Compte propre", ref)
-                save_transaction(msisdn, session_id, "retrait", text,
-                               {"montant": montant, "pin": parts[2]},
-                               payload_cecadm, reponse_cecadm,
-                               f"Retrait de {montant} Fbu effectue\nRef: {ref}", "success")
+                save_final_transaction(msisdn, transaction_id, "retrait", montant,
+                                      "Compte propre", ref, payload_cecadm, reponse_cecadm, "success")
+                save_historique(msisdn, "retrait", montant, "Compte propre", ref)
+                
+                print(f"Retrait confirme: {montant} Fbu | Ref: {ref}")
                 
                 msg = f"""Retrait effectue avec succes!
 Montant: {montant} Fbu
@@ -234,16 +338,262 @@ Reference: {ref}
 Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
                 
 Merci d'utiliser UMWAMPI"""
+                del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
             else:
+                save_final_transaction(msisdn, transaction_id, "retrait", montant,
+                                      "Compte propre", ref, None, None, "annule")
+                print(f"Retrait annule: {montant} Fbu")
+                
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
+                del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
         
-        save_transaction(msisdn, session_id, "retrait", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 3. HISTORIQUE ============
-    elif parts[0] == '3':
+        # ============ BALANCE ============
+        elif step == 'balance_pin':
+            if len(user_input) == 4 and user_input.isdigit():
+                payload_cecadm = {
+                    "endpoint": "CECADM_API/balance",
+                    "phone": msisdn
+                }
+                reponse_cecadm = {
+                    "status": "success",
+                    "code": "200",
+                    "balance": 50000,
+                    "message": "Solde disponible"
+                }
+                
+                # Balance n'est pas une transaction financiere, pas de sauvegarde BD
+                print(f"Balance affichee: {reponse_cecadm['balance']} Fbu")
+                
+                msg = f"""Votre solde UMWAMPI
+Solde: {reponse_cecadm['balance']} Fbu
+                
+0. Menu principal"""
+                session['step'] = 'main_menu'
+                return jsonify({"msg": msg, "request_type": "202"})
+            else:
+                msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
+                return jsonify({"msg": msg, "request_type": "202"})
+        
+        # ============ VENTE UNITES ============
+        elif step == 'vente_menu':
+            if user_input == '1':
+                session['step'] = 'achat_unites_montant'
+                session['data']['type_vente'] = 'achat'
+                msg = "Achat unites\nEntrez le montant (min 1000 Fbu):"
+            elif user_input == '2':
+                session['step'] = 'vente_unites_quantite'
+                session['data']['type_vente'] = 'vente'
+                msg = "Vente unites\nEntrez le nombre d'unites:"
+            else:
+                msg = "Option invalide"
+            print(f"Vente unites - Type: {session['data'].get('type_vente')}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step in ['achat_unites_montant', 'vente_unites_quantite']:
+            session['data']['montant'] = user_input
+            session['step'] = 'unites_benef'
+            msg = "Entrez le numero du beneficiaire:"
+            print(f"Unites - Montant/Quantite: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'unites_benef':
+            session['data']['beneficiaire'] = user_input
+            session['step'] = 'unites_pin'
+            msg = "Entrez votre PIN a 4 chiffres:"
+            print(f"Unites - Beneficiaire: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'unites_pin':
+            if len(user_input) == 4 and user_input.isdigit():
+                session['data']['pin'] = user_input
+                session['step'] = 'unites_confirm'
+                nom_random = get_random_name()
+                session['data']['nom'] = nom_random
+                type_vente = session['data'].get('type_vente', 'achat')
+                
+                if type_vente == 'achat':
+                    msg = f"""Confirmer achat unites
+Montant: {session['data']['montant']} Fbu
+Beneficiaire: {session['data']['beneficiaire']}
+Nom: {nom_random}
+                
+1. Confirmer
+2. Annuler"""
+                else:
+                    msg = f"""Confirmer vente unites
+Unites: {session['data']['montant']}
+Beneficiaire: {session['data']['beneficiaire']}
+Nom: {nom_random}
+                
+1. Confirmer
+2. Annuler"""
+                print(f"Unites - Confirmation | Nom: {nom_random}")
+                return jsonify({"msg": msg, "request_type": "202"})
+            else:
+                msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
+                return jsonify({"msg": msg, "request_type": "202"})
+                
+        elif step == 'unites_confirm':
+            nom_random = session['data']['nom']
+            type_vente = session['data']['type_vente']
+            type_trans = "achat_unites" if type_vente == 'achat' else "vente_unites"
+            montant = int(session['data']['montant'])
+            ref = generate_reference()
+            
+            if user_input == '1':
+                payload_cecadm = {
+                    "endpoint": "CECADM_API/units",
+                    "phone": msisdn,
+                    "type": type_trans,
+                    "amount": montant,
+                    "beneficiaire": session['data']['beneficiaire'],
+                    "reference": ref
+                }
+                reponse_cecadm = {
+                    "status": "success",
+                    "code": "200",
+                    "message": "Transaction unites reussie",
+                    "transaction_id": ref
+                }
+                
+                save_final_transaction(msisdn, transaction_id, type_trans, montant,
+                                      nom_random, ref, payload_cecadm, reponse_cecadm, "success")
+                save_historique(msisdn, type_trans, montant, nom_random, ref)
+                
+                print(f"Unites confirme: {montant} | {nom_random} | Ref: {ref}")
+                
+                msg = f"""Transaction reussie!
+Type: {type_trans}
+Montant: {montant} Fbu
+Beneficiaire: {nom_random}
+Ref: {ref}
+                
+Merci d'utiliser UMWAMPI"""
+                del sessions[transaction_id]
+                return jsonify({"msg": msg, "request_type": "203"})
+            else:
+                save_final_transaction(msisdn, transaction_id, type_trans, montant,
+                                      nom_random, ref, None, None, "annule")
+                print(f"Unites annule: {montant}")
+                
+                msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
+                del sessions[transaction_id]
+                return jsonify({"msg": msg, "request_type": "203"})
+        
+        # ============ BANQUE ============
+        elif step == 'banque_menu':
+            if user_input == '1':
+                session['step'] = 'banque_montant'
+                session['data']['type_banque'] = 'umwampi_to_bank'
+                msg = "UMWAMPI vers Banque\nEntrez le montant:"
+            elif user_input == '2':
+                session['step'] = 'banque_montant'
+                session['data']['type_banque'] = 'bank_to_umwampi'
+                msg = "Banque vers UMWAMPI\nEntrez le montant:"
+            else:
+                msg = "Option invalide"
+            print(f"Banque - Type: {session['data'].get('type_banque')}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'banque_montant':
+            session['data']['montant'] = user_input
+            session['step'] = 'banque_compte'
+            msg = "Entrez le numero de compte bancaire:"
+            print(f"Banque - Montant: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'banque_compte':
+            session['data']['compte'] = user_input
+            session['step'] = 'banque_pin'
+            msg = "Entrez votre PIN a 4 chiffres:"
+            print(f"Banque - Compte: {user_input}")
+            return jsonify({"msg": msg, "request_type": "202"})
+            
+        elif step == 'banque_pin':
+            if len(user_input) == 4 and user_input.isdigit():
+                session['data']['pin'] = user_input
+                session['step'] = 'banque_confirm'
+                nom_random = get_random_name()
+                session['data']['nom'] = nom_random
+                
+                msg = f"""Voulez-vous vraiment envoyer
+{session['data']['montant']} Fbu
+vers Compte {session['data']['compte']}
+Nom: {nom_random}
+                
+1. Confirmer
+2. Annuler"""
+                print(f"Banque - Confirmation | Nom: {nom_random}")
+                return jsonify({"msg": msg, "request_type": "202"})
+            else:
+                msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
+                return jsonify({"msg": msg, "request_type": "202"})
+                
+        elif step == 'banque_confirm':
+            nom_random = session['data']['nom']
+            montant = int(session['data']['montant'])
+            type_trans = session['data']['type_banque']
+            ref = generate_reference()
+            
+            if user_input == '1':
+                payload_cecadm = {
+                    "endpoint": "CECADM_API/bank_transfer",
+                    "phone": msisdn,
+                    "type": type_trans,
+                    "amount": montant,
+                    "compte": session['data']['compte'],
+                    "nom_beneficiaire": nom_random,
+                    "reference": ref
+                }
+                reponse_cecadm = {
+                    "status": "success",
+                    "code": "200",
+                    "message": "Transfert bancaire effectue",
+                    "transaction_id": ref,
+                    "banque_destinataire": "CECADM"
+                }
+                
+                save_final_transaction(msisdn, transaction_id, type_trans, montant,
+                                      nom_random, ref, payload_cecadm, reponse_cecadm, "success")
+                save_historique(msisdn, type_trans, montant, nom_random, ref)
+                
+                print(f"Banque confirme: {montant} Fbu | {nom_random} | Ref: {ref}")
+                
+                msg = f"""Transfert bancaire reussi!
+Montant: {montant} Fbu
+Beneficiaire: {nom_random}
+Compte: {session['data']['compte']}
+Ref: {ref}
+                
+Merci d'utiliser UMWAMPI"""
+                del sessions[transaction_id]
+                return jsonify({"msg": msg, "request_type": "203"})
+            else:
+                save_final_transaction(msisdn, transaction_id, type_trans, montant,
+                                      nom_random, ref, None, None, "annule")
+                print(f"Banque annule: {montant} Fbu")
+                
+                msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
+                del sessions[transaction_id]
+                return jsonify({"msg": msg, "request_type": "203"})
+        
+        # ============ DEFAUT ============
+        else:
+            print(f"Etape inconnue: {step} | Input: {user_input}")
+            msg = "Session expiree. Veuillez recomposer."
+            if transaction_id in sessions:
+                del sessions[transaction_id]
+            return jsonify({"msg": msg, "request_type": "205"})
+            
+    except Exception as e:
+        print(f"ERREUR: {e}")
+        return jsonify({"msg": "Service momentanement indisponible", "request_type": "205"})
+
+def handle_historique(msisdn, transaction_id):
+    """Affiche l'historique (pas de sauvegarde BD, juste affichage)"""
+    try:
         conn = sqlite3.connect('umwampi.db')
         historique = conn.execute(
             "SELECT * FROM historique WHERE msisdn=? ORDER BY date_heure DESC LIMIT 5",
@@ -256,228 +606,18 @@ Merci d'utiliser UMWAMPI"""
             for h in historique:
                 type_trans = h[2].upper()
                 montant = h[3]
-                date_trans = h[6][:10] if len(h) > 6 else "Recent"
-                msg += f"{date_trans} {type_trans}: {montant} Fbu\n"
+                msg += f"{type_trans}: {montant} Fbu\n"
             msg += "\n0. Menu principal"
         else:
             msg = "Aucune transaction recente\n0. Menu principal"
         
-        save_transaction(msisdn, session_id, "historique", text, {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 4. BALANCE ============
-    elif parts[0] == '4':
-        if len(parts) == 1:
-            msg = "Entrez votre PIN a 4 chiffres:"
-        elif len(parts) == 2:
-            pin = parts[1]
-            if len(pin) == 4 and pin.isdigit():
-                payload_cecadm = {
-                    "endpoint": "CECADM_API/balance",
-                    "phone": msisdn
-                }
-                reponse_cecadm = {
-                    "status": "success",
-                    "code": "200",
-                    "balance": 50000,
-                    "message": "Solde disponible"
-                }
-                
-                msg = f"""Votre solde UMWAMPI
-Solde: {reponse_cecadm['balance']} Fbu
-                
-0. Menu principal"""
-                
-                save_transaction(msisdn, session_id, "balance", text,
-                               {"pin": pin}, payload_cecadm, reponse_cecadm,
-                               f"Solde: {reponse_cecadm['balance']} Fbu", "success")
-            else:
-                msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
+        print(f"Historique affiche pour {msisdn}")
+        sessions[transaction_id]['step'] = 'main_menu'
         
         return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 5. VENTE UNITES ============
-    elif parts[0] == '5':
-        if len(parts) == 1:
-            msg = """Vente unites
-1. Acheter unites
-2. Vendre unites
-0. Menu principal"""
-        elif len(parts) == 2:
-            if parts[1] == '1':
-                msg = "Achat unites\nEntrez le montant (min 1000 Fbu):"
-            elif parts[1] == '2':
-                msg = "Vente unites\nEntrez le nombre d'unites:"
-            else:
-                msg = "Option invalide"
-        elif len(parts) == 3:
-            if parts[1] == '1':
-                msg = "Entrez le numero du beneficiaire:"
-            elif parts[1] == '2':
-                msg = "Entrez le numero du beneficiaire:"
-        elif len(parts) == 4:
-            if parts[1] == '1':
-                msg = "Entrez votre PIN a 4 chiffres:"
-            elif parts[1] == '2':
-                msg = "Entrez votre PIN a 4 chiffres:"
-        elif len(parts) == 5:
-            pin = parts[4]
-            if len(pin) == 4 and pin.isdigit():
-                nom_random = get_random_name()
-                if parts[1] == '1':
-                    msg = f"""Confirmer achat unites
-Montant: {parts[2]} Fbu
-Beneficiaire: {parts[3]}
-Nom: {nom_random}
-                
-1. Confirmer
-2. Annuler"""
-                else:
-                    msg = f"""Confirmer vente unites
-Unites: {parts[2]}
-Beneficiaire: {parts[3]}
-Nom: {nom_random}
-                
-1. Confirmer
-2. Annuler"""
-            else:
-                msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
-        elif len(parts) == 6:
-            if parts[5] == '1':
-                ref = generate_reference()
-                nom_random = get_random_name()
-                type_trans = "achat_unites" if parts[1] == '1' else "vente_unites"
-                montant = int(parts[2])
-                
-                payload_cecadm = {
-                    "endpoint": "CECADM_API/units",
-                    "phone": msisdn,
-                    "type": type_trans,
-                    "amount": montant,
-                    "beneficiaire": parts[3],
-                    "reference": ref
-                }
-                reponse_cecadm = {
-                    "status": "success",
-                    "code": "200",
-                    "message": "Transaction unites reussie",
-                    "transaction_id": ref
-                }
-                
-                save_historique(msisdn, type_trans, montant, nom_random, ref)
-                save_transaction(msisdn, session_id, "vente_unites", text,
-                               {"type": type_trans, "montant": montant, "beneficiaire": parts[3]},
-                               payload_cecadm, reponse_cecadm,
-                               f"{type_trans} reussi\nRef: {ref}", "success")
-                
-                msg = f"""Transaction reussie!
-Type: {type_trans}
-Montant: {montant} Fbu
-Beneficiaire: {nom_random}
-Ref: {ref}
-                
-Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "203"})
-            else:
-                msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "203"})
-        
-        save_transaction(msisdn, session_id, "vente_unites", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ 6. BANQUE ============
-    elif parts[0] == '6':
-        if len(parts) == 1:
-            msg = """Banque
-1. UMWAMPI vers Banque
-2. Banque vers UMWAMPI
-0. Menu principal"""
-        elif len(parts) == 2:
-            if parts[1] == '1':
-                msg = "UMWAMPI vers Banque\nEntrez le montant:"
-            elif parts[1] == '2':
-                msg = "Banque vers UMWAMPI\nEntrez le montant:"
-            else:
-                msg = "Option invalide"
-        elif len(parts) == 3:
-            msg = "Entrez le numero de compte bancaire:"
-        elif len(parts) == 4:
-            msg = "Entrez votre PIN a 4 chiffres:"
-        elif len(parts) == 5:
-            pin = parts[4]
-            if len(pin) == 4 and pin.isdigit():
-                nom_random = get_random_name()
-                direction = "UMWAMPI -> Banque" if parts[1] == '1' else "Banque -> UMWAMPI"
-                msg = f"""Voulez-vous vraiment envoyer
-{parts[2]} Fbu
-vers Compte {parts[3]}
-Nom: {nom_random}
-                
-1. Confirmer
-2. Annuler"""
-            else:
-                msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
-        elif len(parts) == 6:
-            if parts[5] == '1':
-                ref = generate_reference()
-                nom_random = get_random_name()
-                montant = int(parts[2])
-                type_trans = "umwampi_to_bank" if parts[1] == '1' else "bank_to_umwampi"
-                
-                payload_cecadm = {
-                    "endpoint": "CECADM_API/bank_transfer",
-                    "phone": msisdn,
-                    "type": type_trans,
-                    "amount": montant,
-                    "compte": parts[3],
-                    "nom_beneficiaire": nom_random,
-                    "reference": ref
-                }
-                reponse_cecadm = {
-                    "status": "success",
-                    "code": "200",
-                    "message": "Transfert bancaire effectue",
-                    "transaction_id": ref,
-                    "banque_destinataire": "CECADM"
-                }
-                
-                save_historique(msisdn, type_trans, montant, nom_random, ref)
-                save_transaction(msisdn, session_id, "banque", text,
-                               {"montant": montant, "compte": parts[3], "beneficiaire": nom_random},
-                               payload_cecadm, reponse_cecadm,
-                               f"Transfert {montant} Fbu vers {nom_random}", "success")
-                
-                msg = f"""Transfert bancaire reussi!
-Montant: {montant} Fbu
-Beneficiaire: {nom_random}
-Compte: {parts[3]}
-Ref: {ref}
-                
-Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "203"})
-            else:
-                msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "203"})
-        
-        save_transaction(msisdn, session_id, "banque", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ RETOUR MENU PRINCIPAL ============
-    elif text == '0' or '0' in parts:
-        msg = """Bienvenue sur UMWAMPI
-1. Depot
-2. Retrait
-3. Historique
-4. Balance
-5. Vente unites
-6. Banque"""
-        save_transaction(msisdn, session_id, "menu", text, {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "202"})
-    
-    # ============ DEFAUT ============
-    else:
-        msg = "Option invalide. Reessayez."
-        return jsonify({"msg": msg, "request_type": "203"})
+    except Exception as e:
+        print(f"Erreur historique: {e}")
+        return jsonify({"msg": "Erreur historique", "request_type": "205"})
 
 # ============ DASHBOARD ============
 @app.route('/dashboard')
@@ -494,90 +634,77 @@ def dashboard():
     
     conn.close()
     
+    # Même HTML que avant, juste adapté aux nouveaux champs
     html = """<!DOCTYPE html>
 <html>
 <head>
-    <title>UMWAMPI - Dashboard Demo CECADM</title>
+    <title>UMWAMPI - Dashboard CECADM</title>
     <meta charset="utf-8">
     <meta http-equiv="refresh" content="5">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 20px; background: #f0f2f5; }
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f0f2f5; }
         .container { max-width: 1400px; margin: 0 auto; }
         .header { background: #BCF; color: darkblue; padding: 20px; border-radius: 10px; margin-bottom: 20px; }
-        .header h1 { font-size: 24px; margin-bottom: 5px; }
-        .header p { opacity: 0.9; font-size: 14px; }
+        .header h1 { font-size: 24px; }
         .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .stat-card h3 { color: #666; font-size: 14px; margin-bottom: 10px; }
-        .stat-card .value { font-size: 28px; font-weight: bold; color: #333; }
-        .stat-card.success .value { color: #27ae60; }
-        .stat-card.pending .value { color: #f39c12; }
-        .stat-card.total .value { color: #3498db; }
-        .section { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; 
-                  box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .section h2 { font-size: 18px; margin-bottom: 15px; color: #333; 
-                     border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+        .stat-card h3 { color: #666; font-size: 14px; }
+        .stat-card .value { font-size: 28px; font-weight: bold; }
+        .success .value { color: #27ae60; }
+        .section { background: white; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th { background: #f8f9fa; padding: 12px; text-align: left; font-weight: 600; 
-            border-bottom: 2px solid #dee2e6; color: #495057; }
-        td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6; }
+        td { padding: 10px; border-bottom: 1px solid #f0f0f0; }
         tr:hover { background: #f8f9ff; }
-        .badge { display: inline-block; padding: 4px 10px; border-radius: 12px; 
-                font-size: 11px; font-weight: 600; text-transform: uppercase; }
+        .badge { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
         .badge-depot { background: #d5f5e3; color: #27ae60; }
         .badge-retrait { background: #fadbd8; color: #e74c3c; }
-        .badge-historique { background: #d6eaf8; color: #2980b9; }
-        .badge-balance { background: #f9e79f; color: #f39c12; }
-        .badge-vente { background: #e8daef; color: #8e44ad; }
         .badge-banque { background: #d5dbdb; color: #2c3e50; }
-        .badge-menu { background: #e5e7e9; color: #7f8c8d; }
-        pre { background: #f8f9fa; padding: 8px; border-radius: 4px; font-size: 11px;
-        overflow: hidden; margin: 0; white-space: pre-wrap; word-break: break-all; }
+        pre { background: #f8f9fa; padding: 8px; border-radius: 4px; font-size: 11px; }
         .status-success { color: #27ae60; font-weight: bold; }
-        .status-pending { color: #f39c12; font-weight: bold; }
-        .live-indicator { display: inline-block; width: 10px; height: 10px; background: #27ae60; 
-                         border-radius: 50%; animation: pulse 2s infinite; margin-right: 5px; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .status-annule { color: #e74c3c; font-weight: bold; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>📱 UMWAMPI - Plateforme Monnaie Electronique</h1>
-            <p><span class="live-indicator"></span> Dashboard en temps reel - Integration CECADM</p>
+            <h1>📱 UMWAMPI - Transactions finales</h1>
+            <p>Dashboard temps reel - Integration CECADM via Akanyenyeri 2.0</p>
         </div>
         
         <div class="stats">
-            <div class="stat-card total">
-                <h3>Total Requetes</h3>
+            <div class="stat-card">
+                <h3>Total Transactions</h3>
                 <div class="value">""" + str(total) + """</div>
             </div>
             <div class="stat-card success">
-                <h3>Transactions Reussies</h3>
+                <h3>Reussies</h3>
                 <div class="value">""" + str(reussies) + """</div>
             </div>
-            <div class="stat-card pending">
-                <h3>En Cours</h3>
-                <div class="value">""" + str(total - reussies) + """</div>
+            <div class="stat-card">
+                <h3>Annulees</h3>
+                <div class="value" style="color: #e74c3c;">""" + str(total - reussies) + """</div>
             </div>
             <div class="stat-card">
-                <h3>Derniere Transaction</h3>
-                <div class="value" style="font-size: 14px;">""" + (transactions[0]['timestamp'][:19] if transactions else 'Aucune') + """</div>
+                <h3>Derniere</h3>
+                <div class="value" style="font-size: 14px;">""" + (transactions[0]['timestamp'][:19] if transactions else '-') + """</div>
             </div>
         </div>
         
         <div class="section">
-            <h2>📋 Donnees envoyees a CECADM</h2>
+            <h2>📋 Transactions Finales (Confirmees ou Annulees)</h2>
             <table>
                 <thead>
                     <tr>
-                        <th>Date/Heure</th>
-                        <th>Telephone</th>
+                        <th>Date</th>
+                        <th>Tel</th>
                         <th>Operation</th>
-                        <th>Payload ➔ CECADM</th>
+                        <th>Montant</th>
+                        <th>Destinataire</th>
+                        <th>Reference</th>
+                        <th>Payload CECADM</th>
                         <th>Reponse CECADM</th>
-                        <th>Message USSD</th>
                         <th>Statut</th>
                     </tr>
                 </thead>
@@ -586,9 +713,8 @@ def dashboard():
     for t in transactions:
         badge_class = {
             'depot': 'badge-depot', 'retrait': 'badge-retrait',
-            'historique': 'badge-historique', 'balance': 'badge-balance',
-            'vente_unites': 'badge-vente', 'banque': 'badge-banque',
-            'menu': 'badge-menu'
+            'achat_unites': 'badge-depot', 'vente_unites': 'badge-retrait',
+            'umwampi_to_bank': 'badge-banque', 'bank_to_umwampi': 'badge-banque'
         }.get(t['operation'], '')
         
         html += f"""
@@ -596,40 +722,17 @@ def dashboard():
                         <td>{t['timestamp'][:19] if t['timestamp'] else ''}</td>
                         <td>{t['msisdn']}</td>
                         <td><span class="badge {badge_class}">{t['operation']}</span></td>
-                        <td><pre>{t['payload_cecadm'][:100] if t['payload_cecadm'] else 'En attente...'}</pre></td>
-                        <td><pre>{t['reponse_cecadm'][:100] if t['reponse_cecadm'] else 'En attente...'}</pre></td>
-                        <td>{t['message_ussd'][:80]}...</td>
-                        <td class="status-{t['statut']}">{'✓' if t['statut'] == 'success' else '⏳'} {t['statut']}</td>
+                        <td>{t['montant']} Fbu</td>
+                        <td>{t['destinataire']}</td>
+                        <td style="font-size:11px;">{t['reference']}</td>
+                        <td><pre>{t['payload_cecadm'][:80] if t['payload_cecadm'] else '-'}</pre></td>
+                        <td><pre>{t['reponse_cecadm'][:80] if t['reponse_cecadm'] else '-'}</pre></td>
+                        <td class="status-{t['statut']}">{'✅' if t['statut'] == 'success' else '❌'} {t['statut']}</td>
                     </tr>"""
     
-    html += f"""
+    html += """
                 </tbody>
             </table>
-        </div>
-        
-        <div class="section">
-            <h2>🔄 Arborescence USSD</h2>
-            <pre style="background: #2c3e50; color: #ecf0f1; padding: 15px; font-size: 13px;">
-MENU PRINCIPAL ({MAIN_CODE})
-├── 1. Depot
-│   └── Montant → PIN → Confirmation → SUCCESS
-├── 2. Retrait
-│   └── Montant → PIN → Confirmation → SUCCESS
-├── 3. Historique
-│   └── Affichage 5 dernieres transactions
-├── 4. Balance
-│   └── PIN → Solde affiche
-├── 5. Vente unites
-│   ├── 1. Acheter unites
-│   │   └── Montant → Beneficiaire → PIN → Confirmation(Nom) → SUCCESS
-│   └── 2. Vendre unites
-│       └── Unites → Beneficiaire → PIN → Confirmation(Nom) → SUCCESS
-└── 6. Banque
-    ├── 1. UMWAMPI → Banque
-    │   └── Montant → Compte → PIN → Confirmation(Nom) → SUCCESS
-    └── 2. Banque → UMWAMPI
-        └── Montant → Compte → PIN → Confirmation(Nom) → SUCCESS
-            </pre>
         </div>
     </div>
 </body>
@@ -637,38 +740,12 @@ MENU PRINCIPAL ({MAIN_CODE})
     
     return html
 
-# ============ EXPORT API ============
-@app.route('/api/export')
-def export_api():
-    conn = sqlite3.connect('umwampi.db')
-    conn.row_factory = sqlite3.Row
-    transactions = conn.execute(
-        "SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 100"
-    ).fetchall()
-    conn.close()
-    
-    data = []
-    for t in transactions:
-        data.append({
-            "date": t['timestamp'],
-            "telephone": t['msisdn'],
-            "operation": t['operation'],
-            "payload_cecadm": json.loads(t['payload_cecadm']) if t['payload_cecadm'] else None,
-            "reponse_cecadm": json.loads(t['reponse_cecadm']) if t['reponse_cecadm'] else None,
-            "message_ussd": t['message_ussd'],
-            "statut": t['statut']
-        })
-    return jsonify(data)
-
-# # ============ DEMARRAGE ============
-# if __name__ == '__main__':
-#     init_db()
-#     print("=" * 60)
-#     print("UMWAMPI - Serveur USSD demarre!")
-#     print("USSD Callback: http://localhost:5000/ussd/callback")
-#     print("Dashboard: http://localhost:5000/dashboard")
-#     print("Export API: http://localhost:5000/api/export")
-#     print("=" * 60)
-#     app.run(host='0.0.0.0', port=5000, debug=True)
-
+# ============ INIT ============
 init_db()
+print("=" * 60)
+print("UMWAMPI pret!")
+print("USSD: http://localhost:5000/ussd/callback")
+print("Dashboard: http://localhost:5000/dashboard")
+print("Logs en console uniquement")
+print("BD: Transactions finales uniquement")
+print("=" * 60)
