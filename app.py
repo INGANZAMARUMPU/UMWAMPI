@@ -211,35 +211,39 @@ def ussd_callback():
                 msg = "Montant invalide\nEntrez le montant:"
             print(f"Depot - Montant: {user_input}")
             return jsonify({"msg": msg, "request_type": "202"})
-            
+
         elif step == 'depot_pin':
             if len(user_input) == 4 and user_input.isdigit():
                 session['data']['pin'] = user_input
                 session['step'] = 'depot_confirm'
                 ref = generate_reference()
                 session['data']['reference'] = ref
+                nom_random = get_random_name()  # AJOUT: nom aleatoire
+                session['data']['nom'] = nom_random
                 msg = f"""Confirmation depot
-Montant: {session['data']['montant']} Fbu
-Reference: {ref}
-                
-1. Confirmer
-2. Annuler"""
+        Montant: {session['data']['montant']} Fbu
+        Reference: {ref}
+        Nom: {nom_random}
+
+        1. Confirmer
+        2. Annuler"""
             else:
                 msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
             print(f"Depot - PIN: ****")
             return jsonify({"msg": msg, "request_type": "202"})
-            
+
         elif step == 'depot_confirm':
             montant = int(session['data']['montant'])
             ref = session['data']['reference']
+            nom = session['data']['nom']  # AJOUT
             
             if user_input == '1':
-                # SIMULATION CECADM
                 payload_cecadm = {
                     "endpoint": "CECADM_API/deposit",
                     "phone": msisdn,
                     "amount": montant,
-                    "reference": ref
+                    "reference": ref,
+                    "nom_deposant": nom  # AJOUT
                 }
                 reponse_cecadm = {
                     "status": "success",
@@ -249,25 +253,24 @@ Reference: {ref}
                     "nouveau_solde": 50000 + montant
                 }
                 
-                # Sauvegarde BD (finale seulement)
                 save_final_transaction(msisdn, transaction_id, "depot", montant, 
-                                      "Compte propre", ref, payload_cecadm, reponse_cecadm, "success")
-                save_historique(msisdn, "depot", montant, "Compte propre", ref)
+                                    nom, ref, payload_cecadm, reponse_cecadm, "success")
+                save_historique(msisdn, "depot", montant, nom, ref)
                 
-                print(f"Depot confirme: {montant} Fbu | Ref: {ref}")
+                print(f"Depot confirme: {montant} Fbu | {nom} | Ref: {ref}")
                 
                 msg = f"""Depot effectue avec succes!
-Montant: {montant} Fbu
-Reference: {ref}
-Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
-                
-Merci d'utiliser UMWAMPI"""
+        Montant: {montant} Fbu
+        Nom: {nom}
+        Reference: {ref}
+        Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
+
+        Merci d'utiliser UMWAMPI"""
                 del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
             else:
-                # Annulation - aussi sauvegardé en BD
                 save_final_transaction(msisdn, transaction_id, "depot", montant,
-                                      "Compte propre", ref, None, None, "annule")
+                                    nom, ref, None, None, "annule")
                 print(f"Depot annule: {montant} Fbu")
                 
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
@@ -291,12 +294,15 @@ Merci d'utiliser UMWAMPI"""
                 session['step'] = 'retrait_confirm'
                 ref = generate_reference()
                 session['data']['reference'] = ref
+                nom_random = get_random_name()  # AJOUT
+                session['data']['nom'] = nom_random
                 msg = f"""Confirmation retrait
-Montant: {session['data']['montant']} Fbu
-Reference: {ref}
-                
-1. Confirmer
-2. Annuler"""
+        Montant: {session['data']['montant']} Fbu
+        Reference: {ref}
+        Nom: {nom_random}
+
+        1. Confirmer
+        2. Annuler"""
             else:
                 msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
             print(f"Retrait - PIN: ****")
