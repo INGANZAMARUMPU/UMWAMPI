@@ -221,12 +221,12 @@ def ussd_callback():
                 nom_random = get_random_name()  # AJOUT: nom aleatoire
                 session['data']['nom'] = nom_random
                 msg = f"""Confirmation depot
-        Montant: {session['data']['montant']} Fbu
-        Reference: {ref}
-        Nom: {nom_random}
+Montant: {session['data']['montant']} Fbu
+Reference: {ref}
+Nom: {nom_random}
 
-        1. Confirmer
-        2. Annuler"""
+1. Confirmer
+2. Annuler"""
             else:
                 msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
             print(f"Depot - PIN: ****")
@@ -260,12 +260,12 @@ def ussd_callback():
                 print(f"Depot confirme: {montant} Fbu | {nom} | Ref: {ref}")
                 
                 msg = f"""Depot effectue avec succes!
-        Montant: {montant} Fbu
-        Nom: {nom}
-        Reference: {ref}
-        Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
+Montant: {montant} Fbu
+Nom: {nom}
+Reference: {ref}
+Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
 
-        Merci d'utiliser UMWAMPI"""
+Merci d'utiliser UMWAMPI"""
                 del sessions[transaction_id]
                 return jsonify({"msg": msg, "request_type": "203"})
             else:
@@ -297,12 +297,12 @@ def ussd_callback():
                 nom_random = get_random_name()  # AJOUT
                 session['data']['nom'] = nom_random
                 msg = f"""Confirmation retrait
-        Montant: {session['data']['montant']} Fbu
-        Reference: {ref}
-        Nom: {nom_random}
+Montant: {session['data']['montant']} Fbu
+Reference: {ref}
+Nom: {nom_random}
 
-        1. Confirmer
-        2. Annuler"""
+1. Confirmer
+2. Annuler"""
             else:
                 msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
             print(f"Retrait - PIN: ****")
@@ -410,15 +410,12 @@ Solde: {reponse_cecadm['balance']} Fbu
             if len(user_input) == 4 and user_input.isdigit():
                 session['data']['pin'] = user_input
                 session['step'] = 'unites_confirm'
-                nom_random = get_random_name()
-                session['data']['nom'] = nom_random
                 type_vente = session['data'].get('type_vente', 'achat')
                 
                 if type_vente == 'achat':
                     msg = f"""Confirmer achat unites
 Montant: {session['data']['montant']} Fbu
 Beneficiaire: {session['data']['beneficiaire']}
-Nom: {nom_random}
                 
 1. Confirmer
 2. Annuler"""
@@ -426,11 +423,10 @@ Nom: {nom_random}
                     msg = f"""Confirmer vente unites
 Unites: {session['data']['montant']}
 Beneficiaire: {session['data']['beneficiaire']}
-Nom: {nom_random}
                 
 1. Confirmer
 2. Annuler"""
-                print(f"Unites - Confirmation | Nom: {nom_random}")
+                print(f"Unites - Confirmation")
                 return jsonify({"msg": msg, "request_type": "202"})
             else:
                 msg = "PIN invalide (4 chiffres)\nEntrez votre PIN:"
