@@ -43,8 +43,6 @@ def init_db():
                   montant REAL,
                   destinataire TEXT,
                   reference TEXT,
-                  payload_cecadm TEXT,
-                  reponse_cecadm TEXT,
                   statut TEXT,
                   timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)''')
     
@@ -83,14 +81,11 @@ def save_final_transaction(msisdn, transaction_id, operation, montant, destinata
     """Sauvegarde UNIQUEMENT les transactions finales (confirmees ou annulees)"""
     conn = sqlite3.connect('umwampi.db')
     c = conn.cursor()
-    c.execute('''INSERT INTO transactions 
-                 (msisdn, transaction_id, operation, montant, destinataire, reference,
-                  payload_cecadm, reponse_cecadm, statut)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-              (msisdn, transaction_id, operation, montant, destinataire, reference,
-               json.dumps(payload) if payload else None,
-               json.dumps(reponse) if reponse else None,
-               statut))
+    c.execute('''
+              INSERT INTO transactions 
+                 (msisdn, transaction_id, operation, montant, destinataire, reference, statut)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)''',
+              (msisdn, transaction_id, operation, montant, destinataire, reference, statut))
     conn.commit()
     conn.close()
 
@@ -703,8 +698,6 @@ def dashboard():
                         <th>Montant</th>
                         <th>Destinataire</th>
                         <th>Reference</th>
-                        <th>Payload CECADM</th>
-                        <th>Reponse CECADM</th>
                         <th>Statut</th>
                     </tr>
                 </thead>
@@ -725,8 +718,6 @@ def dashboard():
                         <td>{t['montant']} Fbu</td>
                         <td>{t['destinataire']}</td>
                         <td style="font-size:11px;">{t['reference']}</td>
-                        <td><pre>{t['payload_cecadm'][:80] if t['payload_cecadm'] else '-'}</pre></td>
-                        <td><pre>{t['reponse_cecadm'][:80] if t['reponse_cecadm'] else '-'}</pre></td>
                         <td class="status-{t['statut']}">{'✅' if t['statut'] == 'success' else '❌'} {t['statut']}</td>
                     </tr>"""
     
