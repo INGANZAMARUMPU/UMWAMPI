@@ -26,6 +26,8 @@ NOMS_BENEFICIAIRES = [
     "Leonidas NDAYISENGA"
 ]
 
+MAIN_CODE = "*220*423#"
+
 # ============ BASE DE DONNEES ============
 def init_db():
     conn = sqlite3.connect('umwampi.db')
@@ -103,15 +105,15 @@ def save_historique(msisdn, type_trans, montant, destinataire, reference):
 @app.route('/ussd/callback', methods=['POST'])
 def ussd_callback():
     data = request.json
-    msisdn = data.get('msisdn', '25761069606')
-    session_id = data.get('transaction_id"', 'test123')
-    text = data.get('ussd_request_msg', '')
+    msisdn = data.get('msisdn', '25761069606') # pyright: ignore 
+    session_id = data.get('transaction_id"', 'test123') # pyright: ignore 
+    text = data.get('ussd_request_msg', '') # pyright: ignore 
     
     parts = text.split('*') if text else []
     print(f"{msisdn} => {text}")
     
     # ============ MENU PRINCIPAL ============
-    if text == '':
+    if text == MAIN_CODE:
         msg = """Bienvenue sur UMWAMPI
 1. Depot
 2. Retrait
@@ -600,7 +602,7 @@ def dashboard():
                         <td class="status-{t['statut']}">{'✓' if t['statut'] == 'success' else '⏳'} {t['statut']}</td>
                     </tr>"""
     
-    html += """
+    html += f"""
                 </tbody>
             </table>
         </div>
@@ -608,7 +610,7 @@ def dashboard():
         <div class="section">
             <h2>🔄 Arborescence USSD</h2>
             <pre style="background: #2c3e50; color: #ecf0f1; padding: 15px; font-size: 13px;">
-MENU PRINCIPAL (*220*423#)
+MENU PRINCIPAL ({MAIN_CODE})
 ├── 1. Depot
 │   └── Montant → PIN → Confirmation → SUCCESS
 ├── 2. Retrait
