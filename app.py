@@ -113,7 +113,7 @@ def ussd_callback():
         user_input = data.get('ussd_request_msg', '').strip() # pyright: ignore
         
         # LOG: tout est loggué dans la console, rien en BD
-        print(f"📱 [{transaction_id}] {msisdn} => '{user_input}'")
+        print(f"[{transaction_id}] {msisdn} => '{user_input}'")
         
         # ============ INIT SESSION ============
         if transaction_id not in sessions:
@@ -122,7 +122,7 @@ def ussd_callback():
                 'msisdn': msisdn,
                 'data': {}
             }
-            print(f"🆕 Nouvelle session: {transaction_id}")
+            print(f"Nouvelle session: {transaction_id}")
         
         session = sessions[transaction_id]
         step = session.get('step', 'init')
@@ -153,7 +153,7 @@ def ussd_callback():
 4. Balance
 5. Vente unites
 6. Banque"""
-            print(f"🔙 Retour menu: {msisdn}")
+            print(f"Retour menu: {msisdn}")
             return jsonify({"msg": msg, "request_type": "202"})
         
         # ============ MENU PRINCIPAL ============
