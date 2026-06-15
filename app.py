@@ -120,7 +120,7 @@ def ussd_callback():
 5. Vente unites
 6. Banque"""
         save_transaction(msisdn, session_id, "menu", "", {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 1. DEPOT ============
     if parts[0] == '1':
@@ -174,13 +174,13 @@ Reference: {ref}
 Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
                 
 Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
             else:
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
         
         save_transaction(msisdn, session_id, "depot", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 2. RETRAIT ============
     elif parts[0] == '2':
@@ -232,13 +232,13 @@ Reference: {ref}
 Nouveau solde: {reponse_cecadm['nouveau_solde']} Fbu
                 
 Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
             else:
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
         
         save_transaction(msisdn, session_id, "retrait", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 3. HISTORIQUE ============
     elif parts[0] == '3':
@@ -261,7 +261,7 @@ Merci d'utiliser UMWAMPI"""
             msg = "Aucune transaction recente\n0. Menu principal"
         
         save_transaction(msisdn, session_id, "historique", text, {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 4. BALANCE ============
     elif parts[0] == '4':
@@ -292,7 +292,7 @@ Solde: {reponse_cecadm['balance']} Fbu
             else:
                 msg = "PIN invalide. Doit etre 4 chiffres.\nEntrez votre PIN:"
         
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 5. VENTE UNITES ============
     elif parts[0] == '5':
@@ -375,13 +375,13 @@ Beneficiaire: {nom_random}
 Ref: {ref}
                 
 Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
             else:
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
         
         save_transaction(msisdn, session_id, "vente_unites", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ 6. BANQUE ============
     elif parts[0] == '6':
@@ -452,13 +452,13 @@ Compte: {parts[3]}
 Ref: {ref}
                 
 Merci d'utiliser UMWAMPI"""
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
             else:
                 msg = "Transaction annulee.\nMerci d'utiliser UMWAMPI"
-                return jsonify({"msg": msg, "request_type": "end"})
+                return jsonify({"msg": msg, "request_type": "203"})
         
         save_transaction(msisdn, session_id, "banque", text, {}, {}, {}, msg, "pending")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ RETOUR MENU PRINCIPAL ============
     elif text == '0' or '0' in parts:
@@ -470,12 +470,12 @@ Merci d'utiliser UMWAMPI"""
 5. Vente unites
 6. Banque"""
         save_transaction(msisdn, session_id, "menu", text, {}, {}, {}, msg, "success")
-        return jsonify({"msg": msg, "request_type": "input"})
+        return jsonify({"msg": msg, "request_type": "202"})
     
     # ============ DEFAUT ============
     else:
         msg = "Option invalide. Reessayez."
-        return jsonify({"msg": msg, "request_type": "end"})
+        return jsonify({"msg": msg, "request_type": "203"})
 
 # ============ DASHBOARD ============
 @app.route('/dashboard')
