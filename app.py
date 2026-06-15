@@ -108,7 +108,7 @@ def ussd_callback():
     text = data.get('ussd_request_msg', '')
     
     parts = text.split('*') if text else []
-    print(f"📱 {msisdn} => {text}")
+    print(f"{msisdn} => {text}")
     
     # ============ MENU PRINCIPAL ============
     if text == '':
@@ -662,10 +662,10 @@ def export_api():
 # if __name__ == '__main__':
 #     init_db()
 #     print("=" * 60)
-#     print("🚀 UMWAMPI - Serveur USSD demarre!")
-#     print("📱 USSD Callback: http://localhost:5000/ussd/callback")
-#     print("📊 Dashboard: http://localhost:5000/dashboard")
-#     print("📦 Export API: http://localhost:5000/api/export")
+#     print("UMWAMPI - Serveur USSD demarre!")
+#     print("USSD Callback: http://localhost:5000/ussd/callback")
+#     print("Dashboard: http://localhost:5000/dashboard")
+#     print("Export API: http://localhost:5000/api/export")
 #     print("=" * 60)
 #     app.run(host='0.0.0.0', port=5000, debug=True)
 
